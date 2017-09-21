@@ -1145,20 +1145,31 @@ def chatmsg():
     channel = request.form.get('channel', u"")
     msg = request.form.get('msg', u"")
 
-    if not User.current_id() or not channel:
+    user_id = User.current_id()
+    if not user_id or not channel:
         # We must have a logged-in user and a valid channel
         return jsonify(ok = False)
 
-    # Add a message entity to the data store and remember its timestamp
-    ts = ChatModel.add_msg(channel, User.current_id(), msg)
+    game = None
+    if channel.startswith(u"game:"):
+        # Send notifications to both players on the game channel
+        uuid = channel[5:][:36] # The game id
+        if uuid:
+            game = Game.load(uuid)
 
-    if channel.startswith(u"game:") and msg:
+    if game is None or not game.has_player(user_id):
+        # The logged-in user must be a player in the game
+        return jsonify(ok = False)
+
+    # Add a message entity to the data store and remember its timestamp
+    ts = ChatModel.add_msg(channel, user_id, msg)
+
+    if msg:
         # Send notifications to both players on the game channel
         # No need to send empty messages, which are to be interpreted
         # as read confirmations
-        uuid = channel[5:] # The game id
         # The message to be sent in JSON form on the channel
-        md = dict(from_userid = User.current_id(), msg = msg, ts = Alphabet.format_timestamp(ts))
+        md = dict(from_userid = user_id, msg = msg, ts = Alphabet.format_timestamp(ts))
         for p in range(0, 2):
             ChannelModel.send_message(u"game",
                 uuid + u":" + str(p),
@@ -1172,25 +1183,34 @@ def chatmsg():
 def chatload():
     """ Load all chat messages on a conversation channel """
 
-    if not User.current_id():
-        # We must have a logged-in user
+    channel = request.form.get('channel', u"")
+
+    user_id = User.current_id()
+    if not user_id or not channel:
+        # We must have a logged-in user and a valid channel
         return jsonify(ok = False)
 
-    channel = request.form.get('channel', u"")
-    messages = []
+    game = None
+    if channel.startswith(u"game:"):
+        uuid = channel[5:][:36] # The game id
+        if uuid:
+            game = Game.load(uuid)
 
-    if channel:
-        # Return the messages sorted in ascending timestamp order.
-        # ChatModel.list_conversations returns them in descending
-        # order since its maxlen limit cuts off the oldest messages.
-        messages = [
-            dict(
-                from_userid = cm["user"],
-                msg = cm["msg"],
-                ts = Alphabet.format_timestamp(cm["ts"])
-            )
-            for cm in sorted(ChatModel.list_conversation(channel), key=lambda x: x["ts"])
-        ]
+    if game is None or not game.has_player(user_id):
+        # The logged-in user must be a player in the game
+        return jsonify(ok = False)
+
+    # Return the messages sorted in ascending timestamp order.
+    # ChatModel.list_conversations returns them in descending
+    # order since its maxlen limit cuts off the oldest messages.
+    messages = [
+        dict(
+            from_userid = cm["user"],
+            msg = cm["msg"],
+            ts = Alphabet.format_timestamp(cm["ts"])
+        )
+        for cm in sorted(ChatModel.list_conversation(channel), key=lambda x: x["ts"])
+    ]
 
     return jsonify(ok = True, messages = messages)
 
